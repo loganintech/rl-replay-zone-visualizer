@@ -10,7 +10,8 @@ use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
 use opengl_graphics::GlGraphics;
 use piston::{Button, ButtonArgs, ButtonEvent, ButtonState, Event, EventLoop, Events, EventSettings, GenericEvent, Input, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, Window, WindowSettings};
-use piston::Key::P;
+use piston::Key::{Left, P, Space};
+use crate::Team::Orange;
 
 const STANDARD_MAP_HEIGHT: f64 = 10280.0;
 const STANDARD_MAP_WIDTH: f64 = 8240.0;
@@ -26,7 +27,7 @@ struct Args {
 }
 
 enum Entity {
-    Player,
+    Player(Team),
     Ball,
 }
 
@@ -35,11 +36,13 @@ struct ActiveActor {
     entity: Entity,
 }
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Team {
     Orange,
     Blue,
 }
 
+#[derive(Debug)]
 struct PlayerDetails {
     name: String,
     actor_id: boxcars::ActorId,
@@ -51,9 +54,9 @@ struct ReplayVis {
     replay: Replay,
     frame_index: usize,
 
-    player_actors: HashSet<boxcars::ActorId>,
-    active_actors_map: HashMap<i32, boxcars::UpdatedAttribute>,
-    active_actor_locations: HashMap<i32, ActiveActor>,
+    player_actors: HashMap<boxcars::ActorId, PlayerDetails>,
+    active_actors_map: HashMap<boxcars::ActorId, boxcars::UpdatedAttribute>,
+    active_actor_locations: HashMap<boxcars::ActorId, ActiveActor>,
 
     active_actor_object_id: usize,
     active_actor_team_id: usize,
@@ -62,13 +65,17 @@ struct ReplayVis {
 
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
-const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 const PURPLE: [f32; 4] = [0.5, 0.0, 0.5, 1.0];
 
 const ORANGE: [[f32; 4]; 3] = [
     [245.0 / 256.0, 146.0 / 256.0, 0.0, 1.0],
     [224.0 / 256.0, 81.0 / 256.0, 0.0, 1.0],
     [250.0 / 256.0, 40.0 / 256.0, 13.0 / 256.0, 1.0],
+];
+const BLUE: [[f32; 4]; 3] = [
+    [0.0, 45.0 / 256.0, 245.0 / 256.0, 1.0],
+    [68.0 / 256.0, 11.0 / 256.0, 222.0 / 256.0, 1.0],
+    [0.0, 141.0 / 256.0, 224.0 / 256.0, 1.0],
 ];
 
 impl ReplayVis {
@@ -117,7 +124,8 @@ impl ReplayVis {
                 );
 
                 let color = match actor.entity {
-                    Entity::Player => RED,
+                    Entity::Player(Team::Orange) => ORANGE[0],
+                    Entity::Player(Team::Blue) => BLUE[0],
                     Entity::Ball => PURPLE,
                 };
                 rectangle(color, entity_location, c.transform, gl);
@@ -125,48 +133,104 @@ impl ReplayVis {
         })
     }
 
-    fn update(&mut self, _args: &UpdateArgs) -> bool {
+    fn move_frame(&mut self, frame: i32) {
+        println!("Frame Changing: {:?}, {:?}", self.frame_index, frame);
+
+        let total_frames =  self.replay.network_frames.as_ref().unwrap().frames.len();
+        if frame < 0 && self.frame_index < frame.abs() as usize {
+            self.frame_index = total_frames - (frame.abs() as usize - self.frame_index);
+            return;
+        }
+
+        if frame > 0 && self.frame_index + frame as usize > total_frames {
+            self.frame_index = (self.frame_index + frame as usize) - total_frames;
+            return;
+        }
+
+        if frame < 0 {
+            self.frame_index -= frame.abs() as usize;
+            return;
+        }
+
+        if frame > 0 {
+            self.frame_index += frame as usize;
+            return;
+        }
+    }
+
+    fn update(&mut self, _args: &UpdateArgs) {
         let frames = &self.replay.network_frames.as_ref().unwrap().frames;
         if self.frame_index >= frames.len() {
-            return false;
+            self.frame_index = 0;
+            self.player_actors.clear();
+            self.active_actor_locations.clear();
+            self.active_actors_map.clear();
         }
         let frame = &frames[self.frame_index];
 
         for actor in &frame.new_actors {
             if actor.object_id.0 as usize == self.player_car_object_id {
-                self.player_actors.insert(actor.actor_id);
+                self.player_actors.insert(actor.actor_id, PlayerDetails {
+                    actor_id: actor.actor_id,
+
+                    team_id: Team::Orange,
+                    name: "".to_string(),
+                });
             }
             // println!("Actor: {:?}\nObj: {:?}", actor, self.replay.objects[actor.object_id.0 as usize]);
         }
 
         for actor in &frame.updated_actors {
-            if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
-                println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
+            // if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
+            //     println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
+            // }
+            if actor.object_id.0 as usize == self.active_actor_team_id {
+                println!("Actor: {:?}", actor);
+                if let Attribute::ActiveActor(boxcars::ActiveActor{ actor: id, ..}) = actor.attribute {
+                    self.player_actors.entry(actor.actor_id).and_modify(|f| {
+                        if id.0 == 3 {
+                            f.team_id = Team::Blue;
+                        } else {
+                            f.team_id == Team::Orange;
+                        }
+                    }).or_insert(PlayerDetails {
+                        name: "".to_string(),
+                        actor_id: actor.actor_id,
+                        team_id: Team::Orange,
+                    });
+                }
+
             }
-            if actor.object_id.0 as usize == self.active_actor_team_id {}
             if actor.object_id.0 as usize == self.active_actor_object_id {
                 if let Attribute::String(player_name) = &actor.attribute {
-                    self.player_actors.insert(actor.actor_id);
+                    self.player_actors.entry(actor.actor_id).and_modify(|f| {
+                        f.name = player_name.to_string()
+                    }).or_insert(PlayerDetails {
+                        name: player_name.to_string(),
+                        actor_id: actor.actor_id,
+                        team_id: Team::Orange,
+                    });
                 }
             }
 
             if let Attribute::ActiveActor(_active) = &actor.attribute {
-                if !self.active_actors_map.contains_key(&actor.actor_id.0) {
-                    self.active_actors_map.insert(actor.actor_id.0, actor.clone());
+                if !self.active_actors_map.contains_key(&actor.actor_id) {
+                    self.active_actors_map.insert(actor.actor_id, actor.clone());
                 }
             }
 
             if let Attribute::RigidBody(body) = &actor.attribute {
-                match self.active_actors_map.get(&actor.actor_id.0) {
+                match self.active_actors_map.get(&actor.actor_id) {
                     Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) => {
-                        println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
+                        // println!("{} {}: {:?}", actor.object_id, self.replay.objects[actor.object_id as usize], actor);
 
-                        self.active_actor_locations.insert(actor.actor_id.0, ActiveActor {
+
+                        self.active_actor_locations.insert(actor.actor_id, ActiveActor {
                             rigid_body: *body,
                             entity: self
                                 .player_actors
                                 .get(&_actor_id.actor)
-                                .map(|player_name| Entity::Player)
+                                .map(|player_name| Entity::Player(player_name.team_id))
                                 .unwrap_or(Entity::Ball),
                         });
                     }
@@ -177,17 +241,25 @@ impl ReplayVis {
             if let Attribute::DemolishFx(demo) = &actor.attribute {
                 let victim = demo.victim;
                 self.player_actors.remove(&victim);
-                self.active_actor_locations.remove(&victim.0);
+                self.active_actor_locations.remove(&victim);
+                self.active_actors_map.remove(&victim);
             }
             if let Attribute::Demolish(demo) = &actor.attribute {
                 let victim = demo.victim;
                 self.player_actors.remove(&victim);
-                self.active_actor_locations.remove(&victim.0);
+                self.active_actor_locations.remove(&victim);
+                self.active_actors_map.remove(&victim);
             }
         }
 
+        for actor in &frame.deleted_actors {
+            self.player_actors.remove(actor);
+            self.active_actor_locations.remove(actor);
+            self.active_actors_map.remove(actor);
+
+        }
+
         self.frame_index += 1;
-        return true;
     }
 }
 
@@ -224,18 +296,38 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
 
         if let Some(args) = e.update_args() {
-            if !viz.update(&args) {
-                window.set_should_close(true);
-            }
+            viz.update(&args);
         }
 
-        if let Some(ButtonArgs { button: Button::Keyboard(Key::Space), state: ButtonState::Press, .. }) = e.button_args() {
-            if ups == 120 {
-                events.set_ups(0);
-                ups = 0;
-            } else {
-                events.set_ups(120);
-                ups = 120;
+        if let Some(args) = e.button_args() {
+            if args.state != ButtonState::Press {
+                continue;
+            }
+
+            match args.button {
+                Button::Keyboard(Key::Space) if ups > 0 => {
+                    events.set_ups(0);
+                    ups = 0;
+                }
+                Button::Keyboard(Key::Space) if ups == 0 => {
+                    events.set_ups(120);
+                    ups = 120;
+                }
+                Button::Keyboard(Key::Left) => {
+                    viz.move_frame(-150)
+                }
+                Button::Keyboard(Key::Right) => {
+                    viz.move_frame(150)
+                }
+                Button::Keyboard(Key::Up) => {
+                    ups += 10;
+                    events.set_ups(ups);
+                }
+                Button::Keyboard(Key::Down) => {
+                    ups -= 10;
+                    events.set_ups(ups);
+                }
+                _ => {}
             }
         }
     }
