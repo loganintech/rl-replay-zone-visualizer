@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error;
 use std::fs;
 use std::io::{BufReader, Read};
@@ -26,7 +26,7 @@ struct Args {
 }
 
 enum Entity {
-    Player(String),
+    Player,
     Ball,
 }
 
@@ -35,17 +35,29 @@ struct ActiveActor {
     entity: Entity,
 }
 
+enum Team {
+    Orange,
+    Blue,
+}
+
+struct PlayerDetails {
+    name: String,
+    actor_id: boxcars::ActorId,
+    team_id: Team,
+}
+
 struct ReplayVis {
     gl: GlGraphics,
     replay: Replay,
     frame_index: usize,
 
-    player_actors: HashMap<i32, String>,
+    player_actors: HashSet<boxcars::ActorId>,
     active_actors_map: HashMap<i32, boxcars::UpdatedAttribute>,
     active_actor_locations: HashMap<i32, ActiveActor>,
 
     active_actor_object_id: usize,
     active_actor_team_id: usize,
+    player_car_object_id: usize,
 }
 
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
@@ -60,15 +72,32 @@ const ORANGE: [[f32; 4]; 3] = [
 ];
 
 impl ReplayVis {
-
+    fn new(gl: GlGraphics, replay: Replay) -> Self {
+        let mut this = Self {
+            gl,
+            replay,
+            frame_index: 0,
+            player_actors: Default::default(),
+            active_actors_map: Default::default(),
+            active_actor_locations: Default::default(),
+            active_actor_object_id: 0,
+            active_actor_team_id: 0,
+            player_car_object_id: 0,
+        };
+        this.prepare();
+        this
+    }
     fn prepare(&mut self) {
         for (id, obj) in self.replay.objects.iter().enumerate() {
-            match obj.as_ref()   {
+            match obj.as_ref() {
                 "Engine.PlayerReplicationInfo:Team" => {
                     self.active_actor_team_id = id;
-                },
+                }
                 "Engine.PlayerReplicationInfo:PlayerName" => {
                     self.active_actor_object_id = id;
+                }
+                "Archetypes.Car.Car_Default" => {
+                    self.player_car_object_id = id;
                 }
                 _ => {}
             }
@@ -88,7 +117,7 @@ impl ReplayVis {
                 );
 
                 let color = match actor.entity {
-                    Entity::Player(_) => RED,
+                    Entity::Player => RED,
                     Entity::Ball => PURPLE,
                 };
                 rectangle(color, entity_location, c.transform, gl);
@@ -104,19 +133,20 @@ impl ReplayVis {
         let frame = &frames[self.frame_index];
 
         for actor in &frame.new_actors {
-            println!("Actor: {:?}", actor);
+            if actor.object_id.0 as usize == self.player_car_object_id {
+                self.player_actors.insert(actor.actor_id);
+            }
+            // println!("Actor: {:?}\nObj: {:?}", actor, self.replay.objects[actor.object_id.0 as usize]);
         }
 
         for actor in &frame.updated_actors {
             if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
                 println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
             }
-            if actor.object_id.0 as usize == self.active_actor_team_id {
-
-            }
-            if actor.object_id.0 as usize == self.active_actor_object_id  {
+            if actor.object_id.0 as usize == self.active_actor_team_id {}
+            if actor.object_id.0 as usize == self.active_actor_object_id {
                 if let Attribute::String(player_name) = &actor.attribute {
-                    self.player_actors.insert(actor.actor_id.0, player_name.clone());
+                    self.player_actors.insert(actor.actor_id);
                 }
             }
 
@@ -129,12 +159,14 @@ impl ReplayVis {
             if let Attribute::RigidBody(body) = &actor.attribute {
                 match self.active_actors_map.get(&actor.actor_id.0) {
                     Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) => {
+                        println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
+
                         self.active_actor_locations.insert(actor.actor_id.0, ActiveActor {
                             rigid_body: *body,
                             entity: self
                                 .player_actors
-                                .get(&_actor_id.actor.0)
-                                .map(|player_name| Entity::Player(player_name.clone()))
+                                .get(&_actor_id.actor)
+                                .map(|player_name| Entity::Player)
                                 .unwrap_or(Entity::Ball),
                         });
                     }
@@ -143,14 +175,14 @@ impl ReplayVis {
             }
 
             if let Attribute::DemolishFx(demo) = &actor.attribute {
-                let victim = demo.victim.0;
+                let victim = demo.victim;
                 self.player_actors.remove(&victim);
-                self.active_actor_locations.remove(&victim);
+                self.active_actor_locations.remove(&victim.0);
             }
             if let Attribute::Demolish(demo) = &actor.attribute {
-                let victim = demo.victim.0;
+                let victim = demo.victim;
                 self.player_actors.remove(&victim);
-                self.active_actor_locations.remove(&victim);
+                self.active_actor_locations.remove(&victim.0);
             }
         }
 
@@ -169,7 +201,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .must_parse_network_data()
         .parse()?;
 
-
     let opengl = OpenGL::V4_5;
     let mut window: GlutinWindow = WindowSettings::new(
         "Replay",
@@ -183,17 +214,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .build()?;
 
 
-    let mut viz = ReplayVis {
-        gl: GlGraphics::new(opengl),
-        replay,
-        frame_index: 0,
-        player_actors: Default::default(),
-        active_actors_map: Default::default(),
-        active_actor_locations: Default::default(),
-        active_actor_object_id: 0,
-        active_actor_team_id: 0,
-    };
-    viz.prepare();
+    let mut viz = ReplayVis::new(GlGraphics::new(opengl), replay);
 
     let mut ups = 120;
     let mut events = Events::new(EventSettings::new().max_fps(60).ups(ups));
