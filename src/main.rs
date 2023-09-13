@@ -1,17 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error;
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
-use boxcars::{Attribute, Frame, Replay};
+use boxcars::{Attribute, Replay};
 use clap::Parser;
 use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
 use opengl_graphics::GlGraphics;
-use piston::{Button, ButtonArgs, ButtonEvent, ButtonState, Event, EventLoop, Events, EventSettings, GenericEvent, Input, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, Window, WindowSettings};
-use piston::Key::{Left, P, Space};
-use crate::Team::Orange;
+use piston::{Button, ButtonEvent, ButtonState, EventLoop, Events, EventSettings, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, WindowSettings};
 
 const STANDARD_MAP_HEIGHT: f64 = 10280.0;
 const STANDARD_MAP_WIDTH: f64 = 8240.0;
@@ -61,6 +59,12 @@ struct ReplayVis {
     active_actor_object_id: usize,
     active_actor_team_id: usize,
     player_car_object_id: usize,
+
+    team_0_object_id: usize,
+    team_1_object_id: usize,
+
+    team_0_actor_id: usize,
+    team_1_actor_id: usize,
 }
 
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
@@ -90,6 +94,10 @@ impl ReplayVis {
             active_actor_object_id: 0,
             active_actor_team_id: 0,
             player_car_object_id: 0,
+            team_0_object_id: 0,
+            team_1_object_id: 0,
+            team_1_actor_id: 0,
+            team_0_actor_id: 0,
         };
         this.prepare();
         this
@@ -106,9 +114,20 @@ impl ReplayVis {
                 "Archetypes.Car.Car_Default" => {
                     self.player_car_object_id = id;
                 }
+                "Archetypes.Teams.Team0" => {
+                    self.team_0_object_id = id;
+                }
+                "Archetypes.Teams.Team1" => {
+                    self.team_1_object_id = id;
+                }
                 _ => {}
             }
         }
+        println!("Data: {:?}", self.replay.objects);
+        println!("Data: {:?}", self.replay.names);
+        println!("Data: {:?}", self.replay.class_indices);
+        println!("Data: {:?}", self.replay.packages);
+        println!("Data: {:?}", self.replay.properties);
     }
     fn render(&mut self, args: &RenderArgs) {
         use graphics::*;
@@ -134,7 +153,7 @@ impl ReplayVis {
     }
 
     fn move_frame(&mut self, frame: i32) {
-        println!("Frame Changing: {:?}, {:?}", self.frame_index, frame);
+        // println!("Frame Changing: {:?}, {:?}", self.frame_index, frame);
 
         let total_frames =  self.replay.network_frames.as_ref().unwrap().frames.len();
         if frame < 0 && self.frame_index < frame.abs() as usize {
@@ -169,6 +188,16 @@ impl ReplayVis {
         let frame = &frames[self.frame_index];
 
         for actor in &frame.new_actors {
+            // if actor.actor_id.0 == 2 || actor.actor_id.0 == 10 {
+            //     println!("Actor: {:?}", actor);
+            //     println!("Object: {:?}", self.replay.objects[actor.object_id.0 as usize]);
+            // }
+            if actor.object_id.0 as usize == self.team_0_object_id {
+                self.team_0_actor_id = actor.actor_id.0 as usize
+            }
+            if actor.object_id.0 as usize == self.team_1_object_id {
+                self.team_1_actor_id = actor.actor_id.0 as usize
+            }
             if actor.object_id.0 as usize == self.player_car_object_id {
                 self.player_actors.insert(actor.actor_id, PlayerDetails {
                     actor_id: actor.actor_id,
@@ -181,14 +210,19 @@ impl ReplayVis {
         }
 
         for actor in &frame.updated_actors {
+            if actor.actor_id.0 == 2 || actor.actor_id.0 == 10 {
+                println!("Actor: {:?}", actor);
+                println!("Object: {:?}", self.replay.objects[actor.object_id.0 as usize]);
+            }
             // if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
             //     println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
             // }
             if actor.object_id.0 as usize == self.active_actor_team_id {
-                println!("Actor: {:?}", actor);
                 if let Attribute::ActiveActor(boxcars::ActiveActor{ actor: id, ..}) = actor.attribute {
                     self.player_actors.entry(actor.actor_id).and_modify(|f| {
-                        if id.0 == 3 {
+
+
+                        if id.0 as usize == self.team_0_actor_id {
                             f.team_id = Team::Blue;
                         } else {
                             f.team_id == Team::Orange;
