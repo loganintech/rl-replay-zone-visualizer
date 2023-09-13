@@ -68,6 +68,7 @@ struct ReplayVis {
 }
 
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+const GREY: [f32; 4] = [0.0, 153.0/256.0, 51.0/256.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const PURPLE: [f32; 4] = [0.5, 0.0, 0.5, 1.0];
 
@@ -123,17 +124,12 @@ impl ReplayVis {
                 _ => {}
             }
         }
-        println!("Data: {:?}", self.replay.objects);
-        println!("Data: {:?}", self.replay.names);
-        println!("Data: {:?}", self.replay.class_indices);
-        println!("Data: {:?}", self.replay.packages);
-        println!("Data: {:?}", self.replay.properties);
     }
     fn render(&mut self, args: &RenderArgs) {
         use graphics::*;
 
         self.gl.draw(args.viewport(), |c, gl| {
-            clear(GREEN, gl);
+            clear(GREY, gl);
 
             for (_actor, actor) in &self.active_actor_locations {
                 let entity_location = circle(
@@ -153,8 +149,6 @@ impl ReplayVis {
     }
 
     fn move_frame(&mut self, frame: i32) {
-        // println!("Frame Changing: {:?}, {:?}", self.frame_index, frame);
-
         let total_frames =  self.replay.network_frames.as_ref().unwrap().frames.len();
         if frame < 0 && self.frame_index < frame.abs() as usize {
             self.frame_index = total_frames - (frame.abs() as usize - self.frame_index);
@@ -188,10 +182,6 @@ impl ReplayVis {
         let frame = &frames[self.frame_index];
 
         for actor in &frame.new_actors {
-            // if actor.actor_id.0 == 2 || actor.actor_id.0 == 10 {
-            //     println!("Actor: {:?}", actor);
-            //     println!("Object: {:?}", self.replay.objects[actor.object_id.0 as usize]);
-            // }
             if actor.object_id.0 as usize == self.team_0_object_id {
                 self.team_0_actor_id = actor.actor_id.0 as usize
             }
@@ -206,17 +196,9 @@ impl ReplayVis {
                     name: "".to_string(),
                 });
             }
-            // println!("Actor: {:?}\nObj: {:?}", actor, self.replay.objects[actor.object_id.0 as usize]);
         }
 
         for actor in &frame.updated_actors {
-            if actor.actor_id.0 == 2 || actor.actor_id.0 == 10 {
-                println!("Actor: {:?}", actor);
-                println!("Object: {:?}", self.replay.objects[actor.object_id.0 as usize]);
-            }
-            // if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
-            //     println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
-            // }
             if actor.object_id.0 as usize == self.active_actor_team_id {
                 if let Attribute::ActiveActor(boxcars::ActiveActor{ actor: id, ..}) = actor.attribute {
                     self.player_actors.entry(actor.actor_id).and_modify(|f| {
@@ -225,7 +207,7 @@ impl ReplayVis {
                         if id.0 as usize == self.team_0_actor_id {
                             f.team_id = Team::Blue;
                         } else {
-                            f.team_id == Team::Orange;
+                            f.team_id = Team::Orange;
                         }
                     }).or_insert(PlayerDetails {
                         name: "".to_string(),
@@ -256,9 +238,6 @@ impl ReplayVis {
             if let Attribute::RigidBody(body) = &actor.attribute {
                 match self.active_actors_map.get(&actor.actor_id) {
                     Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) => {
-                        // println!("{} {}: {:?}", actor.object_id, self.replay.objects[actor.object_id as usize], actor);
-
-
                         self.active_actor_locations.insert(actor.actor_id, ActiveActor {
                             rigid_body: *body,
                             entity: self
