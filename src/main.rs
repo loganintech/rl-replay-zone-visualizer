@@ -3,10 +3,19 @@ use std::error;
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use boxcars::Attribute;
-use boxcars::NewActor;
 
+use boxcars::{Attribute, Frame, Replay};
 use clap::Parser;
+use glutin_window::{GlutinWindow, OpenGL};
+use graphics::ellipse::circle;
+use opengl_graphics::GlGraphics;
+use piston::{Button, ButtonArgs, ButtonEvent, ButtonState, Event, EventLoop, Events, EventSettings, GenericEvent, Input, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, Window, WindowSettings};
+use piston::Key::P;
+
+const STANDARD_MAP_HEIGHT: f64 = 10280.0;
+const STANDARD_MAP_WIDTH: f64 = 8240.0;
+const SCALE_FACTOR: f64 = 10.;
+const STANDARD_GOAL_SIZE: f64 = 0.;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -14,6 +23,140 @@ struct Args {
     /// Path to replay file to visualize.
     #[arg(short, long)]
     replay: PathBuf,
+}
+
+enum Entity {
+    Player(String),
+    Ball,
+}
+
+struct ActiveActor {
+    rigid_body: boxcars::RigidBody,
+    entity: Entity,
+}
+
+struct ReplayVis {
+    gl: GlGraphics,
+    replay: Replay,
+    frame_index: usize,
+
+    player_actors: HashMap<i32, String>,
+    active_actors_map: HashMap<i32, boxcars::UpdatedAttribute>,
+    active_actor_locations: HashMap<i32, ActiveActor>,
+
+    active_actor_object_id: usize,
+    active_actor_team_id: usize,
+}
+
+const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+const PURPLE: [f32; 4] = [0.5, 0.0, 0.5, 1.0];
+
+const ORANGE: [[f32; 4]; 3] = [
+    [245.0 / 256.0, 146.0 / 256.0, 0.0, 1.0],
+    [224.0 / 256.0, 81.0 / 256.0, 0.0, 1.0],
+    [250.0 / 256.0, 40.0 / 256.0, 13.0 / 256.0, 1.0],
+];
+
+impl ReplayVis {
+
+    fn prepare(&mut self) {
+        for (id, obj) in self.replay.objects.iter().enumerate() {
+            match obj.as_ref()   {
+                "Engine.PlayerReplicationInfo:Team" => {
+                    self.active_actor_team_id = id;
+                },
+                "Engine.PlayerReplicationInfo:PlayerName" => {
+                    self.active_actor_object_id = id;
+                }
+                _ => {}
+            }
+        }
+    }
+    fn render(&mut self, args: &RenderArgs) {
+        use graphics::*;
+
+        self.gl.draw(args.viewport(), |c, gl| {
+            clear(GREEN, gl);
+
+            for (_actor, actor) in &self.active_actor_locations {
+                let entity_location = circle(
+                    (actor.rigid_body.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                    (actor.rigid_body.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                    6.0,
+                );
+
+                let color = match actor.entity {
+                    Entity::Player(_) => RED,
+                    Entity::Ball => PURPLE,
+                };
+                rectangle(color, entity_location, c.transform, gl);
+            }
+        })
+    }
+
+    fn update(&mut self, _args: &UpdateArgs) -> bool {
+        let frames = &self.replay.network_frames.as_ref().unwrap().frames;
+        if self.frame_index >= frames.len() {
+            return false;
+        }
+        let frame = &frames[self.frame_index];
+
+        for actor in &frame.new_actors {
+            println!("Actor: {:?}", actor);
+        }
+
+        for actor in &frame.updated_actors {
+            if self.replay.objects[actor.object_id.0 as usize].starts_with("Engine.PlayerReplicationInfo") {
+                println!("{} {}: {:?}", actor.object_id.0, self.replay.objects[actor.object_id.0 as usize], actor);
+            }
+            if actor.object_id.0 as usize == self.active_actor_team_id {
+
+            }
+            if actor.object_id.0 as usize == self.active_actor_object_id  {
+                if let Attribute::String(player_name) = &actor.attribute {
+                    self.player_actors.insert(actor.actor_id.0, player_name.clone());
+                }
+            }
+
+            if let Attribute::ActiveActor(_active) = &actor.attribute {
+                if !self.active_actors_map.contains_key(&actor.actor_id.0) {
+                    self.active_actors_map.insert(actor.actor_id.0, actor.clone());
+                }
+            }
+
+            if let Attribute::RigidBody(body) = &actor.attribute {
+                match self.active_actors_map.get(&actor.actor_id.0) {
+                    Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) => {
+                        self.active_actor_locations.insert(actor.actor_id.0, ActiveActor {
+                            rigid_body: *body,
+                            entity: self
+                                .player_actors
+                                .get(&_actor_id.actor.0)
+                                .map(|player_name| Entity::Player(player_name.clone()))
+                                .unwrap_or(Entity::Ball),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Attribute::DemolishFx(demo) = &actor.attribute {
+                let victim = demo.victim.0;
+                self.player_actors.remove(&victim);
+                self.active_actor_locations.remove(&victim);
+            }
+            if let Attribute::Demolish(demo) = &actor.attribute {
+                let victim = demo.victim.0;
+                self.player_actors.remove(&victim);
+                self.active_actor_locations.remove(&victim);
+            }
+        }
+
+        self.frame_index += 1;
+        return true;
+    }
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -26,68 +169,53 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .must_parse_network_data()
         .parse()?;
 
-    // let json_data = serde_json::to_string_pretty(&replay)?;
-    // let mut outf = fs::File::create("output.json")?;
-    // outf.write_all(json_data.as_bytes())?;
 
-    println!("Entities: {:?}", replay.class_indices);
-    let objects_by_class_index = replay.class_indices.iter().fold(HashMap::new(), |mut map, index| {
-        map.insert(index.index, index.class.as_str());
-        map
-    });
+    let opengl = OpenGL::V4_5;
+    let mut window: GlutinWindow = WindowSettings::new(
+        "Replay",
+        [
+            STANDARD_MAP_WIDTH / SCALE_FACTOR,
+            (STANDARD_MAP_HEIGHT + STANDARD_GOAL_SIZE) / SCALE_FACTOR,
+        ],
+    )
+        .graphics_api(opengl)
+        .exit_on_esc(true)
+        .build()?;
 
-    println!("Player: {:?}", replay.objects[147]);
-    let mut player_actors: HashMap<i32, String> = HashMap::new();
-    let mut all_actors: HashMap<i32, boxcars::UpdatedAttribute> = HashMap::new();
 
-    // Unwrap is safe because of parser's `.must_parse_network_data`
-    let mut i = 0;
-    for frame in replay.network_frames.unwrap().frames {
-        // for actor in frame.new_actors {
-        //     println!("Actor: {:?}", actor);
-        //     println!("Object: {:?}", replay.objects[actor.object_id.0 as usize]);
-        //     if let Some(name_id) = actor.name_id {
-        //         println!("Name: {:?}", replay.names[name_id as usize]);
-        //     }
-        // }
-        for actor in frame.updated_actors {
-            if actor.object_id.0 == 168 {
-                if let Attribute::String(player_name) = &actor.attribute {
-                    println!("Adding Actor to Map: {:?}", actor);
-                    player_actors.insert(actor.actor_id.0,player_name.clone());
-                }
+    let mut viz = ReplayVis {
+        gl: GlGraphics::new(opengl),
+        replay,
+        frame_index: 0,
+        player_actors: Default::default(),
+        active_actors_map: Default::default(),
+        active_actor_locations: Default::default(),
+        active_actor_object_id: 0,
+        active_actor_team_id: 0,
+    };
+    viz.prepare();
+
+    let mut ups = 120;
+    let mut events = Events::new(EventSettings::new().max_fps(60).ups(ups));
+    while let Some(e) = events.next(&mut window) {
+        if let Some(args) = e.render_args() {
+            viz.render(&args);
+        }
+
+        if let Some(args) = e.update_args() {
+            if !viz.update(&args) {
+                window.set_should_close(true);
             }
+        }
 
-            if let Attribute::ActiveActor(active) = &actor.attribute {
-                if !all_actors.contains_key(&actor.actor_id.0) {
-                    all_actors.insert(actor.actor_id.0, actor.clone());
-                }
+        if let Some(ButtonArgs { button: Button::Keyboard(Key::Space), state: ButtonState::Press, .. }) = e.button_args() {
+            if ups == 120 {
+                events.set_ups(0);
+                ups = 0;
+            } else {
+                events.set_ups(120);
+                ups = 120;
             }
-
-
-            // if player_actors.get(&actor.actor_id.0).is_some() {
-            //     println!("Actor: {:?}", actor);
-            // }
-
-            if let Attribute::RigidBody(body) = &actor.attribute {
-                // match player_actors.get(&actor.actor_id.0) {
-                //     Some(name) => println!("Player Moved: {:?}", body),
-                //     None => println!("Unknown Actor Moved: {:?}", actor),
-                // }
-                match all_actors.get(&actor.actor_id.0) {
-                    Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(actor_id), .. }) => {
-                        if let Some(player) = player_actors.get(&actor_id.actor.0) {
-                            println!("{} Moved: {:?}", player, actor.attribute)
-                        }
-                    },
-                    _ => {},
-                    // _ => println!("Unknown Actor Moved: {:?}", actor),
-                }
-
-
-            }
-            // println!("Actor: {:?}", actor);
-            // println!("Object: {:?}", replay.objects[actor.object_id.0 as usize]);
         }
     }
 
