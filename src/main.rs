@@ -131,7 +131,7 @@ impl ReplayVis {
         self.gl.draw(args.viewport(), |c, gl| {
             clear(GREY, gl);
 
-            for (_actor, actor) in &self.active_actor_locations {
+            for actor in self.active_actor_locations.values() {
                 let entity_location = circle(
                     (actor.rigid_body.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
                     (actor.rigid_body.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
@@ -150,8 +150,8 @@ impl ReplayVis {
 
     fn move_frame(&mut self, frame: i32) {
         let total_frames =  self.replay.network_frames.as_ref().unwrap().frames.len();
-        if frame < 0 && self.frame_index < frame.abs() as usize {
-            self.frame_index = total_frames - (frame.abs() as usize - self.frame_index);
+        if frame < 0 && self.frame_index < frame.unsigned_abs() as usize {
+            self.frame_index = total_frames - (frame.unsigned_abs() as usize - self.frame_index);
             return;
         }
 
@@ -161,13 +161,12 @@ impl ReplayVis {
         }
 
         if frame < 0 {
-            self.frame_index -= frame.abs() as usize;
+            self.frame_index -= frame.unsigned_abs() as usize;
             return;
         }
 
         if frame > 0 {
             self.frame_index += frame as usize;
-            return;
         }
     }
 
@@ -230,24 +229,19 @@ impl ReplayVis {
             }
 
             if let Attribute::ActiveActor(_active) = &actor.attribute {
-                if !self.active_actors_map.contains_key(&actor.actor_id) {
-                    self.active_actors_map.insert(actor.actor_id, actor.clone());
-                }
+                self.active_actors_map.entry(actor.actor_id).or_insert_with(|| actor.clone());
             }
 
             if let Attribute::RigidBody(body) = &actor.attribute {
-                match self.active_actors_map.get(&actor.actor_id) {
-                    Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) => {
-                        self.active_actor_locations.insert(actor.actor_id, ActiveActor {
-                            rigid_body: *body,
-                            entity: self
-                                .player_actors
-                                .get(&_actor_id.actor)
-                                .map(|player_name| Entity::Player(player_name.team_id))
-                                .unwrap_or(Entity::Ball),
-                        });
-                    }
-                    _ => {}
+                if let Some(&boxcars::UpdatedAttribute { attribute: Attribute::ActiveActor(_actor_id), .. }) = self.active_actors_map.get(&actor.actor_id) {
+                    self.active_actor_locations.insert(actor.actor_id, ActiveActor {
+                        rigid_body: *body,
+                        entity: self
+                            .player_actors
+                            .get(&_actor_id.actor)
+                            .map(|player_name| Entity::Player(player_name.team_id))
+                            .unwrap_or(Entity::Ball),
+                    });
                 }
             }
 
