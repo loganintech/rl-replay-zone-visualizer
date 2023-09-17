@@ -71,7 +71,7 @@ struct ReplayVis {
     player_team_object_id: Option<ObjectId>,
     car_object_id: Option<ObjectId>,
     player_object_id: Option<ObjectId>,
-    car_movement_object_id: Option<ObjectId>,
+    rigid_body_moved_object_id: Option<ObjectId>,
 
 }
 
@@ -121,7 +121,7 @@ impl ReplayVis {
             player_team_object_id: None,
             car_object_id: None,
             player_object_id: None,
-            car_movement_object_id: None,
+            rigid_body_moved_object_id: None,
 
         };
         this.prepare();
@@ -159,7 +159,7 @@ impl ReplayVis {
                     self.player_object_id = id;
                 }
                 "TAGame.RBActor_TA:ReplicatedRBState" => {
-                    self.car_movement_object_id = id
+                    self.rigid_body_moved_object_id = id
                 }
                 _ => {}
             }
@@ -192,7 +192,7 @@ impl ReplayVis {
                     6.0,
                 );
 
-                rectangle(ORANGE[0], entity_location, c.transform, gl);
+                rectangle(PURPLE, entity_location, c.transform, gl);
             }
         })
     }
@@ -262,7 +262,6 @@ impl ReplayVis {
                 // When a player team is set or changed
                 object_id if let Some(team_id) = self.player_team_object_id && object_id == team_id => {
                     if let Some(player) = self.player_actors.get_mut(&actor.actor_id) {
-
                         match actor.attribute {
                             Attribute::ActiveActor(actor) if self.orange_team_actor_id.is_some() && actor.actor.0 == self.orange_team_actor_id.unwrap().0 => {
                                 player.team = Team::Orange;
@@ -299,17 +298,17 @@ impl ReplayVis {
                     }
                 }
                 // When a player car is set or changed
-                object_id if let Some(car_movement_id) = self.car_movement_object_id && object_id == car_movement_id => {
+                object_id if let Some(rigid_body_moved) = self.rigid_body_moved_object_id && object_id == rigid_body_moved => {
                     if let Some(car_body) = self.car_actors.get_mut(&actor.actor_id) {
                         if let Attribute::RigidBody(rigid_body) = &actor.attribute {
                             car_body.replace(*rigid_body);
                         }
                     }
-                }
-                // When a ball is moved
-                object_id if let Some(ball_id) = self.ball_actor_object_id && object_id == ball_id => {
-                    if let Attribute::RigidBody(rb) = &actor.attribute {
-                        self.ball = Some(*rb);
+
+                    if let Some(ball) = self.ball_actor_id && actor.actor_id == ball {
+                        if let Attribute::RigidBody(rb) = &actor.attribute {
+                            self.ball = Some(*rb);
+                        }
                     }
                 }
                 _ => {}
