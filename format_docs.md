@@ -27,3 +27,6 @@ The actor for team 0 (blue?)
 
 ## Archetypes.Teams.Team1
 The actor for team 1 (orange?)
+
+## TAGame.RBActor_TA:ReplicatedRBState
+When a car moves, the actor id is of the Archetypes.Car.Car_Default

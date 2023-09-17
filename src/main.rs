@@ -7,11 +7,11 @@ use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
-use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody};
+use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody, UniqueId, UpdatedAttribute};
 use clap::Parser;
 use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
-use opengl_graphics::{GlGraphics, GlyphCache};
+use opengl_graphics::{GlGraphics};
 use piston::{Button, ButtonEvent, ButtonState, EventLoop, Events, EventSettings, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, WindowSettings};
 
 const STANDARD_MAP_HEIGHT: f64 = 10280.0;
@@ -27,29 +27,21 @@ struct Args {
     replay: PathBuf,
 }
 
-enum Entity {
-    Player(Team),
-    Ball,
-}
 
-struct ActiveActor {
-    rigid_body: boxcars::RigidBody,
-    entity: Entity,
-    actor_id: ActorId,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 enum Team {
+    #[default]
     Orange,
     Blue,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct PlayerDetails {
-    platform_id: boxcars::UniqueId,
+    platform_id: Option<UniqueId>,
     name: String,
     color: [f32; 4],
     car_actor_id: Option<ActorId>,
+    team: Team,
 }
 
 struct ReplayVis {
@@ -57,22 +49,29 @@ struct ReplayVis {
     replay: Replay,
     frame_index: usize,
 
-    orange_team_player_actors: HashMap<ActorId, PlayerDetails>,
-    blue_team_player_actors: HashMap<ActorId, PlayerDetails>,
-    car_actors: HashMap<ActorId, RigidBody>,
-    player_reservations: HashMap<ActorId, boxcars::UniqueId>,
+    player_actors: HashMap<ActorId, PlayerDetails>,
+    car_actors: HashMap<ActorId, Option<RigidBody>>,
     ball: Option<RigidBody>,
+
+    blue_team_count: usize,
+    orange_team_count: usize,
 
     // Semi-Stable Actor IDs
     ball_actor_id: Option<ActorId>,
     orange_team_actor_id: Option<ActorId>,
     blue_team_actor_id: Option<ActorId>,
 
-    // Stable Object IDs
+    // Object IDs
     ball_actor_object_id: Option<ObjectId>,
     blue_team_actor_object_id: Option<ObjectId>,
-    orange_team_actor_object_id: Option<ObjectId>
-
+    orange_team_actor_object_id: Option<ObjectId>,
+    player_car_object_id: Option<ObjectId>,
+    player_name_object_id: Option<ObjectId>,
+    player_id_object_id: Option<ObjectId>,
+    player_team_object_id: Option<ObjectId>,
+    car_object_id: Option<ObjectId>,
+    player_object_id: Option<ObjectId>,
+    car_movement_object_id: Option<ObjectId>,
 
 }
 
@@ -102,11 +101,12 @@ impl ReplayVis {
             replay,
             frame_index: 0,
 
-            orange_team_player_actors: Default::default(),
-            blue_team_player_actors: Default::default(),
+            player_actors: Default::default(),
             car_actors: Default::default(),
-            player_reservations: Default::default(),
             ball: None,
+
+            blue_team_count: 0,
+            orange_team_count: 0,
 
             ball_actor_id: None,
             ball_actor_object_id: None,
@@ -115,27 +115,54 @@ impl ReplayVis {
             orange_team_actor_id: None,
             blue_team_actor_id: None,
 
+            player_car_object_id: None,
+            player_name_object_id: None,
+            player_id_object_id: None,
+            player_team_object_id: None,
+            car_object_id: None,
+            player_object_id: None,
+            car_movement_object_id: None,
+
         };
         this.prepare();
         this
     }
     fn prepare(&mut self) {
-        for actor in &self.replay.network_frames.as_ref().unwrap().frames[0].new_actors {
-           match self.replay.objects[actor.object_id.0 as usize].as_str() {
-               "Archetypes.Ball.Ball_Default" => {
-                   self.ball_actor_object_id = Some(actor.object_id);
-               }
-               "Archetypes.Teams.Team0" => {
-                   self.orange_team_actor_object_id = Some(actor.object_id);
-               },
-               "Archetypes.Teams.Team1" => {
-                   self.blue_team_actor_object_id = Some(actor.object_id);
-               },
-               "Engine.Pawn:PlayerReplicationInfo" => {
-
-               },
-               _ => {},
-           }
+        for (index, object_name) in self.replay.objects.iter().enumerate() {
+            let id = Some(ObjectId(index as i32));
+            match object_name.as_str() {
+                "Archetypes.Ball.Ball_Default" => {
+                    self.ball_actor_object_id = id;
+                }
+                "Archetypes.Teams.Team0" => {
+                    self.orange_team_actor_object_id = id;
+                }
+                "Archetypes.Teams.Team1" => {
+                    self.blue_team_actor_object_id = id;
+                }
+                "Engine.Pawn:PlayerReplicationInfo" => {
+                    self.player_car_object_id = id;
+                }
+                "Engine.PlayerReplicationInfo:Team" => {
+                    self.player_team_object_id = id;
+                }
+                "Engine.PlayerReplicationInfo:PlayerName" => {
+                    self.player_name_object_id = id;
+                }
+                "Engine.PlayerReplicationInfo:PlayerID" => {
+                    self.player_id_object_id = id;
+                }
+                "Archetypes.Car.Car_Default" => {
+                    self.car_object_id = id;
+                }
+                "TAGame.Default__PRI_TA" => {
+                    self.player_object_id = id;
+                }
+                "TAGame.RBActor_TA:ReplicatedRBState" => {
+                    self.car_movement_object_id = id
+                }
+                _ => {}
+            }
         }
     }
     fn render(&mut self, args: &RenderArgs) {
@@ -144,19 +171,19 @@ impl ReplayVis {
         self.gl.draw(args.viewport(), |c, gl| {
             clear(GREY, gl);
 
-            // for player in self.orange_team_player_actors.values() {
-            //     player.car_actor_id.map(|car_actor_id| {
-            //         self.car_actors.get(&car_actor_id).map(|car| {
-            //             let entity_location = circle(
-            //                 (car.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
-            //                 (car.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
-            //                 6.0,
-            //             );
-            //
-            //             rectangle(player.color, entity_location, c.transform, gl);
-            //         })
-            //     });
-            // }
+            for player in self.player_actors.values() {
+                if let Some(car) = player.car_actor_id {
+                    if let Some(Some(r)) = self.car_actors.get(&car) {
+                        let entity_location = circle(
+                            (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                            (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                            6.0,
+                        );
+
+                        rectangle(player.color, entity_location, c.transform, gl);
+                    }
+                }
+            }
 
             if let Some(ball) = self.ball {
                 let entity_location = circle(
@@ -166,17 +193,6 @@ impl ReplayVis {
                 );
 
                 rectangle(ORANGE[0], entity_location, c.transform, gl);
-            }
-
-
-            for player in self.car_actors.values() {
-                let entity_location = circle(
-                    (player.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
-                    (player.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
-                    6.0,
-                );
-
-                rectangle(BLUE[0], entity_location, c.transform, gl);
             }
         })
     }
@@ -200,33 +216,105 @@ impl ReplayVis {
         }
     }
 
+
     fn update(&mut self, _args: &UpdateArgs) {
         let frames = &self.replay.network_frames.as_ref().unwrap().frames;
         if self.frame_index >= frames.len() {
             self.frame_index = 0;
-            self.orange_team_player_actors.clear();
-            self.blue_team_player_actors.clear();
         }
         let frame = &frames[self.frame_index];
 
         for actor in &frame.new_actors {
+            // When a ball is created
             if let Some(ball_actor_object_id) = self.ball_actor_object_id && actor.object_id == ball_actor_object_id {
                 self.ball_actor_id = Some(actor.actor_id);
+            }
+
+            // When a car is created
+            if let Some(car_actor_object_id) = self.car_object_id && actor.object_id == car_actor_object_id {
+                self.car_actors.insert(actor.actor_id, None);
+            }
+
+            // When a team is created
+            if let Some(team_actor_object_id) = self.blue_team_actor_object_id && actor.object_id == team_actor_object_id {
+                self.blue_team_actor_id = Some(actor.actor_id);
+            }
+
+            // When a team is created
+            if let Some(team_actor_object_id) = self.orange_team_actor_object_id && actor.object_id == team_actor_object_id {
+                self.orange_team_actor_id = Some(actor.actor_id);
+            }
+
+            // When a player is created
+            if let Some(player_actor_object_id) = self.player_object_id && actor.object_id == player_actor_object_id && !self.player_actors.contains_key(&actor.actor_id) {
+                self.player_actors.insert(actor.actor_id, PlayerDetails {
+                    platform_id: None,
+                    name: "Unknown".to_string(),
+                    color: PURPLE,
+                    car_actor_id: None,
+                    team: Team::Blue,
+                });
             }
         }
 
         for actor in &frame.updated_actors {
-            if let Attribute::Reservation(res) = &actor.attribute {
-                self.player_reservations.insert( actor.actor_id, res.unique_id.clone());
+            match actor.object_id {
+                // When a player team is set or changed
+                object_id if let Some(team_id) = self.player_team_object_id && object_id == team_id => {
+                    if let Some(player) = self.player_actors.get_mut(&actor.actor_id) {
+
+                        match actor.attribute {
+                            Attribute::ActiveActor(actor) if self.orange_team_actor_id.is_some() && actor.actor.0 == self.orange_team_actor_id.unwrap().0 => {
+                                player.team = Team::Orange;
+                                if player.color == PURPLE {
+                                    player.color = ORANGE[self.orange_team_count];
+                                    self.orange_team_count += 1;
+                                }
+                            }
+                            Attribute::ActiveActor(actor) if self.blue_team_actor_id.is_some() && actor.actor.0 == self.blue_team_actor_id.unwrap().0 => {
+                                player.team = Team::Blue;
+                                if player.color == PURPLE {
+                                    player.color = BLUE[self.blue_team_count];
+                                    self.blue_team_count += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // When a player name is set or changed
+                object_id if let Some(player_name_id) = self.player_name_object_id && object_id == player_name_id => {
+                    if let Some(player) = self.player_actors.get_mut(&actor.actor_id) {
+                        if let Attribute::String(name) = &actor.attribute {
+                            player.name = name.clone();
+                        }
+                    }
+                }
+                // When a player car is set or changed
+                object_id if let Some(player_car_id) = self.player_car_object_id && object_id == player_car_id => {
+                    if let Attribute::ActiveActor(player_actor_id) = &actor.attribute {
+                        if let Some(player) = self.player_actors.get_mut(&player_actor_id.actor) {
+                            player.car_actor_id = Some(actor.actor_id);
+                        }
+                    }
+                }
+                // When a player car is set or changed
+                object_id if let Some(car_movement_id) = self.car_movement_object_id && object_id == car_movement_id => {
+                    if let Some(car_body) = self.car_actors.get_mut(&actor.actor_id) {
+                        if let Attribute::RigidBody(rigid_body) = &actor.attribute {
+                            car_body.replace(*rigid_body);
+                        }
+                    }
+                }
+                // When a ball is moved
+                object_id if let Some(ball_id) = self.ball_actor_object_id && object_id == ball_id => {
+                    if let Attribute::RigidBody(rb) = &actor.attribute {
+                        self.ball = Some(*rb);
+                    }
+                }
+                _ => {}
             }
 
-            if let Attribute::RigidBody(rigid_body) = &actor.attribute {
-                if let Some(ball_actor_id) = self.ball_actor_id && actor.actor_id == ball_actor_id {
-                    self.ball = Some(*rigid_body);
-                } else {
-                    self.car_actors.insert(actor.actor_id, *rigid_body);
-                }
-            }
 
             if let Attribute::DemolishFx(demo) = &actor.attribute {
                 let victim = demo.victim;
@@ -239,25 +327,8 @@ impl ReplayVis {
         }
 
         for actor in &frame.deleted_actors {
-            // If a player left the game
-            if self.player_reservations.remove(actor).is_some() {
-                if let Some(player) = self.orange_team_player_actors.remove(actor) {
-                    if let Some(car) = player.car_actor_id {
-                        self.car_actors.remove(&car);
-                    }
-                }
-                if let Some(player) = self.blue_team_player_actors.remove(actor) {
-                    self.car_actors.remove(&player.car_actor_id.unwrap());
-                }
-            }
-
             // Handle if a player was removed from a team
-            if let Some(player) = self.blue_team_player_actors.remove(actor) {
-                if let Some(car) = player.car_actor_id {
-                    self.car_actors.remove(&car);
-                }
-            }
-            if let Some(player) = self.orange_team_player_actors.remove(actor) {
+            if let Some(player) = self.player_actors.remove(actor) {
                 if let Some(car) = player.car_actor_id {
                     self.car_actors.remove(&car);
                 }
