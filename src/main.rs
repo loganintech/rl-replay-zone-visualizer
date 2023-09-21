@@ -213,7 +213,12 @@ impl<'a> ReplayVis<'a> {
         use graphics::*;
         use voronoice::*;
 
-        let mut colors = vec![];
+        #[derive(Hash, Copy, Clone, Eq, PartialEq)]
+        struct HashablePoint {
+            x: [u8; 8], y: [u8; 8]
+        }
+
+        let mut colors = HashMap::new();
         let mut pts = vec![];
         for player in player_actors.values() {
             if let Some(car) = player.car_actor_id {
@@ -222,7 +227,7 @@ impl<'a> ReplayVis<'a> {
                         x: r.location.x as f64,
                         y: r.location.y as f64,
                     });
-                    colors.push(player.color);
+                    colors.insert(HashablePoint{x: (r.location.x as f64).to_be_bytes(), y: (r.location.y as f64).to_be_bytes()}, player.color);
                 }
             }
         }
@@ -240,15 +245,15 @@ impl<'a> ReplayVis<'a> {
             return;
         };
 
-        for (color, vor_polygon) in voronoi.iter_cells().enumerate() {
-            let mut verticies: Vec<[f64; 2]> = vec![];
-            for point in vor_polygon.iter_vertices() {
-                verticies.push([
+        for cell in voronoi.iter_cells() {
+            let mut vertices: Vec<[f64; 2]> = vec![];
+            for point in cell.iter_vertices() {
+                vertices.push([
                     (point.x + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
                     (point.y + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
                 ]);
             }
-            polygon(colors[color], &verticies, c.transform, gl);
+            polygon(colors[&HashablePoint {x: cell.site_position().x.to_be_bytes(), y: cell.site_position().y.to_be_bytes()}], &vertices, c.transform, gl);
         }
 
         for player in player_actors.values() {
