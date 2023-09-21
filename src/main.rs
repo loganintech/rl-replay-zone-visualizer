@@ -11,8 +11,11 @@ use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody, UniqueId, Updated
 use clap::Parser;
 use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
-use opengl_graphics::{GlGraphics};
-use piston::{Button, ButtonEvent, ButtonState, EventLoop, Events, EventSettings, Key, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, WindowSettings};
+use opengl_graphics::GlGraphics;
+use piston::{
+    Button, ButtonEvent, ButtonState, EventLoop, EventSettings, Events, Key, RenderArgs,
+    RenderEvent, UpdateArgs, UpdateEvent, WindowSettings,
+};
 
 const STANDARD_MAP_HEIGHT: f64 = 10280.0;
 const STANDARD_MAP_WIDTH: f64 = 8240.0;
@@ -26,7 +29,6 @@ struct Args {
     #[arg(short, long)]
     replay: PathBuf,
 }
-
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 enum Team {
@@ -72,7 +74,6 @@ struct ReplayVis {
     car_object_id: Option<ObjectId>,
     player_object_id: Option<ObjectId>,
     rigid_body_moved_object_id: Option<ObjectId>,
-
 }
 
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
@@ -92,7 +93,6 @@ const BLUE: [[f32; 4]; 4] = [
     [0.0, 141.0 / 256.0, 224.0 / 256.0, 1.0],
     [0.0, 0.0, 1.0, 1.0],
 ];
-
 
 impl ReplayVis {
     fn new(gl: GlGraphics, replay: Replay) -> Self {
@@ -122,7 +122,6 @@ impl ReplayVis {
             car_object_id: None,
             player_object_id: None,
             rigid_body_moved_object_id: None,
-
         };
         this.prepare();
         this
@@ -158,9 +157,7 @@ impl ReplayVis {
                 "TAGame.Default__PRI_TA" => {
                     self.player_object_id = id;
                 }
-                "TAGame.RBActor_TA:ReplicatedRBState" => {
-                    self.rigid_body_moved_object_id = id
-                }
+                "TAGame.RBActor_TA:ReplicatedRBState" => self.rigid_body_moved_object_id = id,
                 _ => {}
             }
         }
@@ -215,7 +212,6 @@ impl ReplayVis {
             }
         }
     }
-
 
     fn update(&mut self, _args: &UpdateArgs) {
         let frames = &self.replay.network_frames.as_ref().unwrap().frames;
@@ -314,7 +310,6 @@ impl ReplayVis {
                 _ => {}
             }
 
-
             if let Attribute::DemolishFx(demo) = &actor.attribute {
                 let victim = demo.victim;
                 self.car_actors.remove(&victim);
@@ -350,9 +345,9 @@ fn run(replay: Replay) -> Result<(), Box<dyn error::Error>> {
             (STANDARD_MAP_HEIGHT + STANDARD_GOAL_SIZE) / SCALE_FACTOR,
         ],
     )
-        .graphics_api(opengl)
-        .exit_on_esc(true)
-        .build()?;
+    .graphics_api(opengl)
+    .exit_on_esc(true)
+    .build()?;
 
     let mut viz = ReplayVis::new(GlGraphics::new(opengl), replay);
 
@@ -381,12 +376,8 @@ fn run(replay: Replay) -> Result<(), Box<dyn error::Error>> {
                     events.set_ups(120);
                     ups = 120;
                 }
-                Button::Keyboard(Key::Left) => {
-                    viz.move_frame(-150)
-                }
-                Button::Keyboard(Key::Right) => {
-                    viz.move_frame(150)
-                }
+                Button::Keyboard(Key::Left) => viz.move_frame(-150),
+                Button::Keyboard(Key::Right) => viz.move_frame(150),
                 Button::Keyboard(Key::Up) => {
                     ups += 10;
                     events.set_ups(ups);
