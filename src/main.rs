@@ -37,7 +37,7 @@ struct Args {
 
     /// What kind of display to show, whether it's points to show a point for each player, or voronoi to show a voronoi diagram
     #[arg(value_enum, short, long, default_value_t=DisplayType::POINTS)]
-    display: DisplayType
+    display: DisplayType,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
@@ -111,6 +111,12 @@ const BLUE: [[f32; 4]; 4] = [
     [0.0, 141.0 / 256.0, 224.0 / 256.0, 1.0],
     [0.0, 0.0, 1.0, 1.0],
 ];
+
+const fn MANY_COLORS() -> [[f32; 4]; 8] {
+    [
+        ORANGE[0], ORANGE[1], ORANGE[2], ORANGE[3], BLUE[0], BLUE[1], BLUE[2], BLUE[3],
+    ]
+}
 
 impl<'a> ReplayVis<'a> {
     fn new(args: &'a Args, gl: GlGraphics, replay: Replay) -> Self {
@@ -216,7 +222,8 @@ impl<'a> ReplayVis<'a> {
 
         #[derive(Hash, Copy, Clone, Eq, PartialEq)]
         struct HashablePoint {
-            x: [u8; 8], y: [u8; 8]
+            x: [u8; 8],
+            y: [u8; 8],
         }
 
         let mut colors = HashMap::new();
@@ -228,7 +235,13 @@ impl<'a> ReplayVis<'a> {
                         x: r.location.x as f64,
                         y: r.location.y as f64,
                     });
-                    colors.insert(HashablePoint{x: (r.location.x as f64).to_be_bytes(), y: (r.location.y as f64).to_be_bytes()}, player.color);
+                    colors.insert(
+                        HashablePoint {
+                            x: (r.location.x as f64).to_be_bytes(),
+                            y: (r.location.y as f64).to_be_bytes(),
+                        },
+                        player.color,
+                    );
                 }
             }
         }
@@ -254,7 +267,15 @@ impl<'a> ReplayVis<'a> {
                     (point.y + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
                 ]);
             }
-            polygon(colors[&HashablePoint {x: cell.site_position().x.to_be_bytes(), y: cell.site_position().y.to_be_bytes()}], &vertices, c.transform, gl);
+            polygon(
+                colors[&HashablePoint {
+                    x: cell.site_position().x.to_be_bytes(),
+                    y: cell.site_position().y.to_be_bytes(),
+                }],
+                &vertices,
+                c.transform,
+                gl,
+            );
         }
 
         for player in player_actors.values() {
@@ -289,7 +310,7 @@ impl<'a> ReplayVis<'a> {
             match self.args.display {
                 DisplayType::POINTS => {
                     ReplayVis::render_dots(&player_actors, &car_actors, &c, gl);
-                },
+                }
                 DisplayType::VORONOI => {
                     ReplayVis::render_voronoi_naive(&player_actors, &car_actors, &c, gl);
                 }
