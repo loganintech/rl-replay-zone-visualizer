@@ -13,7 +13,7 @@ Options:
 ```
 
 ### Points Visualization
-![](./pics/rl.png)
+![points vis](./pics/rl.png)
 
 ### Voronoi Visualization
-![](./pics/voronoi.png)
+![voronoi vis](./pics/voronoi.png)
