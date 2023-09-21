@@ -31,10 +31,11 @@ struct Args {
     #[arg(short, long)]
     replay: PathBuf,
 
+    /// Count of network frames to process per second. Defaults to 120, which is the same speed a RL server will process a game
     #[arg(short, long)]
     ups: Option<u64>,
 
-    // What kind of display to show
+    /// What kind of display to show, whether it's points to show a point for each player, or voronoi to show a voronoi diagram
     #[arg(value_enum, short, long, default_value_t=DisplayType::POINTS)]
     display: DisplayType
 }
