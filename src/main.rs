@@ -8,7 +8,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
 use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody, UniqueId};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
 use graphics::{Context, Graphics};
@@ -33,6 +33,17 @@ struct Args {
 
     #[arg(short, long)]
     ups: Option<u64>,
+
+    // What kind of display to show
+    #[arg(value_enum, short, long, default_value_t=DisplayType::POINTS)]
+    display: DisplayType
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+enum DisplayType {
+    #[default]
+    POINTS,
+    VORONOI,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
@@ -51,7 +62,8 @@ struct PlayerDetails {
     team: Team,
 }
 
-struct ReplayVis {
+struct ReplayVis<'a> {
+    args: &'a Args,
     gl: GlGraphics,
     replay: Replay,
     frame_index: usize,
@@ -99,9 +111,10 @@ const BLUE: [[f32; 4]; 4] = [
     [0.0, 0.0, 1.0, 1.0],
 ];
 
-impl ReplayVis {
-    fn new(gl: GlGraphics, replay: Replay) -> Self {
+impl<'a> ReplayVis<'a> {
+    fn new(args: &'a Args, gl: GlGraphics, replay: Replay) -> Self {
         let mut this = Self {
+            args,
             gl,
             replay,
             frame_index: 0,
@@ -184,13 +197,7 @@ impl ReplayVis {
                         (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
                         6.0,
                     );
-                    let entity_background = circle(
-                        (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
-                        (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
-                        10.0,
-                    );
 
-                    rectangle([0.0, 0.0, 0.0, 1.0], entity_background, c.transform, gl);
                     rectangle(player.color, entity_location, c.transform, gl);
                 }
             }
@@ -243,6 +250,26 @@ impl ReplayVis {
             }
             polygon(colors[color], &verticies, c.transform, gl);
         }
+
+        for player in player_actors.values() {
+            if let Some(car) = player.car_actor_id {
+                if let Some(Some(r)) = car_actors.get(&car) {
+                    let entity_location = circle(
+                        (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                        (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                        6.0,
+                    );
+                    let entity_background = circle(
+                        (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                        (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                        10.0,
+                    );
+
+                    rectangle([0.0, 0.0, 0.0, 1.0], entity_background, c.transform, gl);
+                    rectangle(player.color, entity_location, c.transform, gl);
+                }
+            }
+        }
     }
 
     fn render(&mut self, args: &RenderArgs) {
@@ -253,8 +280,14 @@ impl ReplayVis {
         self.gl.draw(args.viewport(), |c, gl| {
             clear(GREY, gl);
 
-            ReplayVis::render_voronoi_naive(&player_actors, &car_actors, &c, gl);
-            ReplayVis::render_dots(&player_actors, &car_actors, &c, gl);
+            match self.args.display {
+                DisplayType::POINTS => {
+                    ReplayVis::render_dots(&player_actors, &car_actors, &c, gl);
+                },
+                DisplayType::VORONOI => {
+                    ReplayVis::render_voronoi_naive(&player_actors, &car_actors, &c, gl);
+                }
+            }
 
             if let Some(ball) = self.ball {
                 let entity_location = circle(
@@ -262,6 +295,16 @@ impl ReplayVis {
                     (ball.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
                     6.0,
                 );
+
+                if self.args.display == DisplayType::VORONOI {
+                    let entity_background = circle(
+                        (ball.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                        (ball.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                        10.0,
+                    );
+
+                    rectangle([0.0, 0.0, 0.0, 1.0], entity_background, c.transform, gl);
+                }
 
                 rectangle(PURPLE, entity_location, c.transform, gl);
             }
@@ -410,7 +453,7 @@ impl ReplayVis {
     }
 }
 
-fn run(args: Args, replay: Replay) -> Result<(), Box<dyn error::Error>> {
+fn run(args: &Args, replay: Replay) -> Result<(), Box<dyn error::Error>> {
     let opengl = OpenGL::V4_5;
     let mut window: GlutinWindow = WindowSettings::new(
         "Replay",
@@ -423,7 +466,7 @@ fn run(args: Args, replay: Replay) -> Result<(), Box<dyn error::Error>> {
     .exit_on_esc(true)
     .build()?;
 
-    let mut viz = ReplayVis::new(GlGraphics::new(opengl), replay);
+    let mut viz = ReplayVis::new(args, GlGraphics::new(opengl), replay);
 
     let mut ups = args.ups.unwrap_or(120);
     let mut events = Events::new(EventSettings::new().max_fps(60).ups(ups));
@@ -530,7 +573,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .must_parse_network_data()
         .parse()?;
 
-    run(args, replay)?;
+    run(&args, replay)?;
 
     Ok(())
 }

@@ -2,4 +2,8 @@
 
 Not sure what this will become
 
+### Points Visualization
 ![](./pics/rl.png)
+
+### Voronoi Visualization
+![](./pics/voronoi.png)
