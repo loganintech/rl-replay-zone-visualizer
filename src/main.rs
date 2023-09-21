@@ -7,17 +7,17 @@ use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
-use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody, UniqueId, UpdatedAttribute};
+use boxcars::{ActorId, Attribute, ObjectId, Replay, RigidBody, UniqueId};
 use clap::Parser;
 use glutin_window::{GlutinWindow, OpenGL};
 use graphics::ellipse::circle;
-use graphics::rectangle::square;
 use graphics::{Context, Graphics};
 use opengl_graphics::GlGraphics;
 use piston::{
     Button, ButtonEvent, ButtonState, EventLoop, EventSettings, Events, Key, RenderArgs,
     RenderEvent, UpdateArgs, UpdateEvent, WindowSettings,
 };
+use voronoice::VoronoiBuilder;
 
 const STANDARD_MAP_HEIGHT: f64 = 10280.0;
 const STANDARD_MAP_WIDTH: f64 = 8240.0;
@@ -99,14 +99,6 @@ const BLUE: [[f32; 4]; 4] = [
     [0.0, 0.0, 1.0, 1.0],
 ];
 
-fn euclidean_distance(point1: (f64, f64), point2: (f64, f64)) -> f64 {
-    ((point2.0 - point1.0).powi(2) + (point2.1 - point1.1).powi(2)).sqrt()
-}
-
-struct VoroniVisualization {
-
-}
-
 impl ReplayVis {
     fn new(gl: GlGraphics, replay: Replay) -> Self {
         let mut this = Self {
@@ -180,7 +172,8 @@ impl ReplayVis {
         player_actors: &HashMap<ActorId, PlayerDetails>,
         car_actors: &HashMap<ActorId, Option<RigidBody>>,
         c: &Context,
-        gl: &mut GlGraphics) {
+        gl: &mut GlGraphics,
+    ) {
         use graphics::*;
 
         for player in player_actors.values() {
@@ -194,9 +187,8 @@ impl ReplayVis {
                     let entity_background = circle(
                         (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
                         (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
-                        12.0,
+                        10.0,
                     );
-
 
                     rectangle([0.0, 0.0, 0.0, 1.0], entity_background, c.transform, gl);
                     rectangle(player.color, entity_location, c.transform, gl);
@@ -205,39 +197,51 @@ impl ReplayVis {
         }
     }
 
-    fn render_voroni_naive(
+    fn render_voronoi_naive(
         player_actors: &HashMap<ActorId, PlayerDetails>,
         car_actors: &HashMap<ActorId, Option<RigidBody>>,
         c: &Context,
         gl: &mut GlGraphics,
     ) {
         use graphics::*;
-        for x in 0..(STANDARD_MAP_WIDTH / SCALE_FACTOR) as i32 {
-            for y in 0..(STANDARD_MAP_HEIGHT / SCALE_FACTOR) as i32 {
-                let x = x as f64;
-                let y = y as f64;
-                let mut closest_point_color: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
-                let mut closest_dist = f64::MAX;
+        use voronoice::*;
 
-                for player in player_actors.values() {
-                    if let Some(car) = player.car_actor_id {
-                        if let Some(Some(r)) = car_actors.get(&car) {
-                            let car_x =
-                                (r.location.x as f64 + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR;
-                            let car_y =
-                                (r.location.y as f64 + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR;
-
-                            let dist = euclidean_distance((x, y), (car_x, car_y));
-                            if dist < closest_dist {
-                                closest_dist = dist;
-                                closest_point_color = player.color;
-                            }
-                        }
-                    }
+        let mut colors = vec![];
+        let mut pts = vec![];
+        for player in player_actors.values() {
+            if let Some(car) = player.car_actor_id {
+                if let Some(Some(r)) = car_actors.get(&car) {
+                    pts.push(Point {
+                        x: r.location.x as f64,
+                        y: r.location.y as f64,
+                    });
+                    colors.push(player.color);
                 }
-
-                rectangle(closest_point_color, square(x, y, 1.0), c.transform, gl);
             }
+        }
+
+        let voronoi = if let Some(builder) = VoronoiBuilder::default()
+            .set_sites(pts)
+            .set_bounding_box(BoundingBox::new_centered(
+                STANDARD_MAP_WIDTH,
+                STANDARD_MAP_HEIGHT,
+            ))
+            .build()
+        {
+            builder
+        } else {
+            return;
+        };
+
+        for (color, vor_polygon) in voronoi.iter_cells().enumerate() {
+            let mut verticies: Vec<[f64; 2]> = vec![];
+            for point in vor_polygon.iter_vertices() {
+                verticies.push([
+                    (point.x + (STANDARD_MAP_WIDTH / 2.0)) / SCALE_FACTOR,
+                    (point.y + (STANDARD_MAP_HEIGHT / 2.0)) / SCALE_FACTOR,
+                ]);
+            }
+            polygon(colors[color], &verticies, c.transform, gl);
         }
     }
 
@@ -249,9 +253,8 @@ impl ReplayVis {
         self.gl.draw(args.viewport(), |c, gl| {
             clear(GREY, gl);
 
-            ReplayVis::render_voroni_naive(&player_actors, &car_actors, &c, gl);
+            ReplayVis::render_voronoi_naive(&player_actors, &car_actors, &c, gl);
             ReplayVis::render_dots(&player_actors, &car_actors, &c, gl);
-
 
             if let Some(ball) = self.ball {
                 let entity_location = circle(
@@ -450,11 +453,11 @@ fn run(args: Args, replay: Replay) -> Result<(), Box<dyn error::Error>> {
                 Button::Keyboard(Key::Left) => viz.move_frame(-150),
                 Button::Keyboard(Key::Right) => viz.move_frame(150),
                 Button::Keyboard(Key::Up) => {
-                    ups += 10;
+                    ups = ups.wrapping_add(10);
                     events.set_ups(ups);
                 }
                 Button::Keyboard(Key::Down) => {
-                    ups -= 10;
+                    ups = ups.wrapping_sub(10);
                     events.set_ups(ups);
                 }
                 _ => {}
